@@ -16,10 +16,10 @@ from datetime import datetime
 from sqlalchemy import Column
 from sqlalchemy import ForeignKey
 
-from sqlalchemy import String
 from sqlalchemy import Integer
 from sqlalchemy import Boolean
 from sqlalchemy import DateTime
+from sqlalchemy import Unicode
 
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -27,8 +27,11 @@ from sqlalchemy.orm import backref
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm import scoped_session
+from sqlalchemy.orm import synonym
 
 from zope.sqlalchemy import ZopeTransactionExtension
+
+from cryptacular.bcrypt import BCRYPTPasswordManager
 
 from .generators import gen_token
 from .generators import gen_client_id
@@ -36,13 +39,14 @@ from .generators import gen_client_secret
 
 DBSession = scoped_session(sessionmaker(extension=ZopeTransactionExtension()))
 Base = declarative_base()
+password_manager = BCRYPTPasswordManager()
 
 
 class Oauth2Client(Base):
     __tablename__ = 'oauth2_provider_clients'
     id = Column(Integer, primary_key=True)
-    client_id = Column(String(64), unique=True, nullable=False)
-    client_secret = Column(String(64), unique=True, nullable=False)
+    client_id = Column(Unicode(64), unique=True, nullable=False)
+    _client_secret = Column(Unicode(255), unique=True, nullable=False)
     revoked = Column(Boolean, default=False)
     revocation_date = Column(DateTime)
 
@@ -50,32 +54,54 @@ class Oauth2Client(Base):
         self.client_id = gen_client_id()
         self.client_secret = gen_client_secret()
 
+    def new_client_secret(self):
+        secret = gen_client_secret()
+        self.client_secret = secret
+        return secret
+
+    def _get_client_secret(self):
+
+        return self._client_secret
+
+    def _set_client_secret(self, client_secret):
+
+        self._client_secret = password_manager.encode(client_secret)
+
+    client_secret = synonym('_client_secret', descriptor=property(
+        _get_client_secret, _set_client_secret))
+
     def revoke(self):
         self.revoked = True
         self.revocation_date = datetime.utcnow()
 
     def isRevoked(self):
+        from warnings import warn
+        warn('Oauth2Client.isRevoked() has been deprecated and will be '
+             'removed. You should now use Oauth2Client.is_revoked().')
+        return self.is_revoked()
+
+    def is_revoked(self):
         return self.revoked
 
 
 class Oauth2RedirectUri(Base):
     __tablename__ = 'oauth2_provider_redirect_uris'
     id = Column(Integer, primary_key=True)
-    uri = Column(String(256), unique=True, nullable=False)
+    uri = Column(Unicode(256), unique=True, nullable=False)
 
     client_id = Column(Integer, ForeignKey(Oauth2Client.id))
     client = relationship(Oauth2Client, backref=backref('redirect_uris'))
 
     def __init__(self, client, uri):
         self.client = client
-        self.uri = uri
+        self.uri = uri.encode('utf-8')
 
 
 class Oauth2Code(Base):
     __tablename__ = 'oauth2_provider_codes'
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, nullable=False)
-    authcode = Column(String(64), unique=True, nullable=False)
+    authcode = Column(Unicode(64), unique=True, nullable=False)
     expires_in = Column(Integer, nullable=False, default=10*60)
 
     revoked = Column(Boolean, default=False)
@@ -97,6 +123,12 @@ class Oauth2Code(Base):
         self.revocation_date = datetime.utcnow()
 
     def isRevoked(self):
+        from warnings import warn
+        warn('Oauth2Code.isRevoked() has been deprecated and will be '
+             'removed. You should now use Oauth2Code.is_revoked().')
+        return self.is_revoked()
+
+    def is_revoked(self):
         expiry = time.mktime(self.create_date.timetuple()) + self.expires_in
         if datetime.frometimestamp(expiry) < datetime.utcnow():
             self.revoke()
@@ -107,8 +139,8 @@ class Oauth2Token(Base):
     __tablename__ = 'oauth2_provider_tokens'
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, nullable=False)
-    access_token = Column(String(64), unique=True, nullable=False)
-    refresh_token = Column(String(64), unique=True, nullable=False)
+    access_token = Column(Unicode(64), unique=True, nullable=False)
+    refresh_token = Column(Unicode(64), unique=True, nullable=False)
     expires_in = Column(Integer, nullable=False, default=60*60)
 
     revoked = Column(Boolean, default=False)
@@ -131,6 +163,12 @@ class Oauth2Token(Base):
         self.revocation_date = datetime.utcnow()
 
     def isRevoked(self):
+        from warnings import warn
+        warn('Oauth2Token.isRevoked() has been deprecated and will be '
+             'removed. You should now use Oauth2Token.is_revoked().')
+        return self.is_revoked()
+
+    def is_revoked(self):
         expiry = time.mktime(self.creation_date.timetuple()) + self.expires_in
         if datetime.fromtimestamp(expiry) < datetime.utcnow():
             self.revoke()
@@ -146,6 +184,12 @@ class Oauth2Token(Base):
         return cls(self.client, self.user_id)
 
     def asJSON(self, **kwargs):
+        from warnings import warn
+        warn('Oauth2Token.asJSON() has been deprecated and will be '
+             'removed. You should now use Oauth2Token.as_json().')
+        return self.as_json(**kwargs)
+
+    def as_json(self, **kwargs):
         token = {
             'access_token': self.access_token,
             'refresh_token': self.refresh_token,

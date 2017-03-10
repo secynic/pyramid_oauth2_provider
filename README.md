@@ -1,5 +1,9 @@
 pyramid_oauth2_provider README
-==================
+==============================
+
+<aside class="warning">
+Warning: You will need to reset your client secrets when updating to v0.3.0.
+</aside>
 
 Getting Started
 ---------------

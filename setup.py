@@ -4,6 +4,8 @@ from setuptools import setup, find_packages
 
 here = os.path.abspath(os.path.dirname(__file__))
 README = open(os.path.join(here, 'README.md')).read()
+CHANGES = open(os.path.join(here, 'CHANGES.md')).read()
+LONG_DESCRIPTION = '\n\n'.join([README, CHANGES])
 
 requires = [
     'pyramid',
@@ -15,12 +17,13 @@ requires = [
     'zope.sqlalchemy',
     'zope.interface',
     'waitress',
+    'cryptacular'
     ]
 
 setup(name='pyramid_oauth2_provider',
       version='0.2',
       description='Oauth2 endpoint for pyramid applications',
-      long_description=README,
+      long_description=LONG_DESCRIPTION,
       classifiers=[
         "Programming Language :: Python",
         "Framework :: Pyramid",

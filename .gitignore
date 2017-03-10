@@ -13,3 +13,4 @@
 .tox
 build/*
 dist/*
+.idea

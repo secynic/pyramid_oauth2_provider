@@ -27,6 +27,7 @@ from .models import Oauth2Token
 from .models import Oauth2Code
 from .models import Oauth2RedirectUri
 from .models import Oauth2Client
+from .models import password_manager
 from .errors import InvalidToken
 from .errors import InvalidClient
 from .errors import InvalidRequest
@@ -52,13 +53,14 @@ def require_https(handler):
             log.info('rejected request due to unsupported scheme: %s'
                      % request.scheme)
             return HTTPBadRequest(InvalidRequest(
-                error_description='Oauth2 requires all requests'
-                                  ' to be made via HTTPS.'))
+                error_description='Oauth2 requires all requests to be made '
+                                  'via HTTPS.'))
         return handler(request)
     return wrapped
 
 
 log = logging.getLogger('pyramid_oauth2_provider.views')
+
 
 @view_config(route_name='oauth2_provider_authorize', renderer='json',
              permission=Authenticated)
@@ -91,7 +93,10 @@ def oauth2_authorize(request):
         Location: https://client.example.com/cb?code=AverTaer&state=efg
 
     """
-    request.client_id = request.params.get('client_id')
+    if not request.params.get('client_id'):
+        return HTTPBadRequest(InvalidRequest(
+            error_description='Invalid client credentials'))
+    request.client_id = request.params.get('client_id').encode('utf-8')
 
     client = db.query(Oauth2Client).filter_by(
         client_id=request.client_id).first()
@@ -101,10 +106,11 @@ def oauth2_authorize(request):
         return HTTPBadRequest(InvalidRequest(
             error_description='Invalid client credentials'))
 
-    redirect_uri = request.params.get('redirect_uri')
+    redirect_uri = (request.params.get('redirect_uri').encode('utf-8') if
+                    request.params.get('redirect_uri') else None)
     redirection_uri = None
     if len(client.redirect_uris) == 1 and (
-        not redirect_uri or redirect_uri == client.redirect_uris[0]):
+                not redirect_uri or redirect_uri == client.redirect_uris[0]):
         redirection_uri = client.redirect_uris[0]
     elif len(client.redirect_uris) > 0:
         redirection_uri = db.query(Oauth2RedirectUri)\
@@ -114,7 +120,6 @@ def oauth2_authorize(request):
         return HTTPBadRequest(InvalidRequest(
             error_description='Redirection URI validation failed'))
 
-    resp = None
     response_type = request.params.get('response_type')
     state = request.params.get('state')
     if 'code' == response_type:
@@ -123,9 +128,11 @@ def oauth2_authorize(request):
         resp = handle_implicit(request, client, redirection_uri, state)
     else:
         log.info('received invalid response_type %s')
-        resp = HTTPBadRequest(InvalidRequest(error_description='Oauth2 unknown '
-            'response_type not supported'))
+        resp = HTTPBadRequest(InvalidRequest(
+            error_description='Oauth2 unknown response_type not supported'))
+
     return resp
+
 
 def handle_authcode(request, client, redirection_uri, state=None):
     parts = urlparse(redirection_uri.uri)
@@ -144,9 +151,11 @@ def handle_authcode(request, client, redirection_uri, state=None):
         urlencode(qparams), '')
     return HTTPFound(location=parts.geturl())
 
+
 def handle_implicit(request, client, redirection_uri, state=None):
-    return HTTPBadRequest(InvalidRequest(error_description='Oauth2 '
-        'response_type "implicit" not supported'))
+    return HTTPBadRequest(InvalidRequest(
+        error_description='Oauth2 response_type "implicit" not supported'))
+
 
 @view_config(route_name='oauth2_provider_token', renderer='json',
              permission=NO_PERMISSION_REQUIRED)
@@ -218,14 +227,14 @@ def oauth2_token(request):
         client_id=request.client_id).first()
 
     # Again, the authorization policy should catch this, but check again.
-    if not client or client.client_secret != request.client_secret:
+    if not client or not password_manager.check(client.client_secret,
+                                                request.client_secret):
         log.info('received invalid client credentials')
         return HTTPBadRequest(InvalidRequest(
             error_description='Invalid client credentials'))
 
     # Check for supported grant type. This is a required field of the form
     # submission.
-    resp = None
     grant_type = request.POST.get('grant_type')
     if grant_type == 'password':
         resp = handle_password(request, client)
@@ -233,66 +242,73 @@ def oauth2_token(request):
         resp = handle_refresh_token(request, client)
     else:
         log.info('invalid grant type: %s' % grant_type)
-        return HTTPBadRequest(UnsupportedGrantType(error_description='Only '
-            'password and refresh_token grant types are supported by this '
-            'authentication server'))
+        return HTTPBadRequest(UnsupportedGrantType(
+            error_description='Only password and refresh_token grant types are'
+                              ' supported by this authentication server'))
 
     add_cache_headers(request)
     return resp
 
+
 def handle_password(request, client):
     if 'username' not in request.POST or 'password' not in request.POST:
         log.info('missing username or password')
-        return HTTPBadRequest(InvalidRequest(error_description='Both username '
-            'and password are required to obtain a password based grant.'))
+        return HTTPBadRequest(InvalidRequest(
+            error_description='Both username and password are required to '
+                              'obtain a password based grant.'))
 
     auth_check = request.registry.queryUtility(IAuthCheck)
-    user_id = auth_check().checkauth(request.POST.get('username'),
-                                     request.POST.get('password'))
+    user_id = auth_check().checkauth(
+        request.POST.get('username').encode('utf-8'),
+        request.POST.get('password').encode('utf-8'))
 
     if not user_id:
         log.info('could not validate user credentials')
-        return HTTPUnauthorized(InvalidClient(error_description='Username and '
-            'password are invalid.'))
+        return HTTPUnauthorized(InvalidClient(
+            error_description='Username and password are invalid.'))
 
     auth_token = Oauth2Token(client, user_id)
     db.add(auth_token)
     db.flush()
     return auth_token.asJSON(token_type='bearer')
 
+
 def handle_refresh_token(request, client):
     if 'refresh_token' not in request.POST:
         log.info('refresh_token field missing')
-        return HTTPBadRequest(InvalidRequest(error_description='refresh_token '
-            'field required'))
+        return HTTPBadRequest(InvalidRequest(
+            error_description='refresh_token field required'))
 
     if 'user_id' not in request.POST:
         log.info('user_id field missing')
-        return HTTPBadRequest(InvalidRequest(error_description='user_id '
-            'field required'))
+        return HTTPBadRequest(InvalidRequest(
+            error_description='user_id field required'))
 
     auth_token = db.query(Oauth2Token).filter_by(
-        refresh_token=request.POST.get('refresh_token')).first()
+        refresh_token=request.POST.get('refresh_token').encode('utf-8')
+    ).first()
 
     if not auth_token:
         log.info('invalid refresh_token')
-        return HTTPUnauthorized(InvalidToken(error_description='Provided '
-            'refresh_token is not valid.'))
+        return HTTPUnauthorized(InvalidToken(
+            error_description='Provided refresh_token is not valid.'))
 
     if auth_token.client.client_id != client.client_id:
         log.info('invalid client_id')
-        return HTTPBadRequest(InvalidClient(error_description='Client does '
-            'not own this refresh_token.'))
+        return HTTPBadRequest(InvalidClient(
+            error_description='Client does not own this refresh_token.'))
 
-    if str(auth_token.user_id) != request.POST.get('user_id'):
+    if str(auth_token.user_id) != request.POST.get('user_id').encode('utf-8'):
         log.info('invalid user_id')
-        return HTTPBadRequest(InvalidClient(error_description='The given '
-            'user_id does not match the given refresh_token.'))
+        return HTTPBadRequest(InvalidClient(
+            error_description='The given user_id does not match the given '
+                              'refresh_token.'))
 
     new_token = auth_token.refresh()
     db.add(new_token)
     db.flush()
     return new_token.asJSON(token_type='bearer')
+
 
 def add_cache_headers(request):
     """

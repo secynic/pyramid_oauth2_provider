@@ -35,12 +35,13 @@ from .models import initialize_sql
 from .interfaces import IAuthCheck
 
 _auth_value = None
+_redirect_uri = None
+
+
 @implementer(IAuthCheck)
 class AuthCheck(object):
     def checkauth(self, username, password):
         return _auth_value
-
-_redirect_uri = None
 
 
 class TestCase(unittest.TestCase):
@@ -53,7 +54,7 @@ class TestCase(unittest.TestCase):
 
         self.auth = 1
 
-        self.redirect_uri = 'http://localhost'
+        self.redirect_uri = u'http://localhost'
 
     def _get_auth(self):
         global _auth_value
@@ -80,8 +81,10 @@ class TestCase(unittest.TestCase):
         testing.tearDown()
 
     def getAuthHeader(self, username, password, scheme='Basic'):
-        encoded = base64.b64encode(('%s:%s' % (username, password)).encode('utf8'))
-        return {'Authorization': '%s %s' % (scheme, encoded.decode('utf8'))}
+        encoded = base64.b64encode(('%s:%s' % (username, password)
+                                    ).encode('utf-8'))
+        return {'Authorization': '%s %s' % (scheme, encoded.decode('utf-8'))}
+
 
 class TestAuthorizeEndpoint(TestCase):
     def setUp(self):
@@ -104,7 +107,8 @@ class TestAuthorizeEndpoint(TestCase):
             redirect_uri = Oauth2RedirectUri(client, self.redirect_uri)
             DBSession.add(redirect_uri)
 
-        client = DBSession.query(Oauth2Client).filter_by(client_id=client_id).first()
+        client = DBSession.query(Oauth2Client).filter_by(client_id=client_id
+                                                         ).first()
         return client
 
     def _create_request(self):
@@ -186,17 +190,19 @@ class TestAuthorizeEndpoint(TestCase):
 
     def testMultipleRedirectUrisUnspecified(self):
         with transaction.manager:
-            redirect_uri = Oauth2RedirectUri(self.client, 'https://otherhost.com')
+            redirect_uri = Oauth2RedirectUri(
+                self.client, 'https://otherhost.com')
             DBSession.add(redirect_uri)
         response = self._process_view()
         self.assertTrue(isinstance(response, jsonerrors.HTTPBadRequest))
 
     def testMultipleRedirectUrisSpecified(self):
         with transaction.manager:
-            redirect_uri = Oauth2RedirectUri(self.client, 'https://otherhost.com')
+            redirect_uri = Oauth2RedirectUri(
+                self.client, 'https://otherhost.com')
             DBSession.add(redirect_uri)
-        self.request.params['redirect_uri'] = 'https://otherhost.com'
-        self.redirect_uri = 'https://otherhost.com'
+        self.request.params['redirect_uri'] = u'https://otherhost.com'
+        self.redirect_uri = u'https://otherhost.com'
         response = self._process_view()
         self._validate_authcode_response(response)
 
@@ -227,10 +233,11 @@ class TestAuthorizeEndpoint(TestCase):
         self.assertTrue('state' in params)
         self.assertEqual(state_value, params['state'])
 
+
 class TestTokenEndpoint(TestCase):
     def setUp(self):
         TestCase.setUp(self)
-        self.client = self._create_client()
+        self.client, self.client_secret = self._create_client()
         self.request = self._create_request()
 
     def tearDown(self):
@@ -241,17 +248,18 @@ class TestTokenEndpoint(TestCase):
     def _create_client(self):
         with transaction.manager:
             client = Oauth2Client()
+            client_secret = client.new_client_secret()
             DBSession.add(client)
             client_id = client.client_id
 
         client = DBSession.query(Oauth2Client).filter_by(
             client_id=client_id).first()
-        return client
+        return client, client_secret
 
     def _create_request(self):
         headers = self.getAuthHeader(
             self.client.client_id,
-            self.client.client_secret)
+            self.client_secret)
 
         data = {
             'grant_type': 'password',
@@ -267,7 +275,7 @@ class TestTokenEndpoint(TestCase):
     def _create_refresh_token_request(self, refresh_token, user_id):
         headers = self.getAuthHeader(
             self.client.client_id,
-            self.client.client_secret)
+            self.client_secret)
 
         data = {
             'grant_type': 'refresh_token',
@@ -401,7 +409,7 @@ class TestTokenEndpoint(TestCase):
         self.request = self._create_refresh_token_request(
             token.get('refresh_token'), token.get('user_id'))
         self.request.headers = self.getAuthHeader(
-            '1234', self.client.client_secret)
+            '1234', self.client_secret)
         token = self._process_view()
         self.assertTrue(isinstance(token, jsonerrors.HTTPBadRequest))
 
