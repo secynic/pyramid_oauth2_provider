@@ -53,8 +53,10 @@ class Oauth2Client(Base):
     _client_secret = Column(Binary(255), unique=True, nullable=False)
     revoked = Column(Boolean, default=False)
     revocation_date = Column(DateTime)
+    _salt = None
 
-    def __init__(self):
+    def __init__(self, salt=None):
+        self._salt = salt
         self.client_id = gen_client_id()
         self.client_secret = gen_client_secret()
 
@@ -68,9 +70,18 @@ class Oauth2Client(Base):
         return self._client_secret
 
     def _set_client_secret(self, client_secret):
-        if not oauth2_settings('salt'):
-            raise ValueError('oauth2_provider.salt configuration required.')
-        salt = b64decode(oauth2_settings('salt').encode('utf-8'))
+        if self._salt:
+            salt = b64decode(self._salt.encode('utf-8'))
+        else:
+            try:
+                if not oauth2_settings('salt'):
+                    raise ValueError(
+                        'oauth2_provider.salt configuration required.'
+                    )
+                salt = b64decode(oauth2_settings('salt').encode('utf-8'))
+            except AttributeError:
+                return
+
         kdf = Scrypt(
             salt=salt,
             length=64,
