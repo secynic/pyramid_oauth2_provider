@@ -46,7 +46,9 @@ class AuthCheck(object):
 
 class TestCase(unittest.TestCase):
     def setUp(self):
-        self.config = testing.setUp()
+        self.config = testing.setUp(
+            settings={'oauth2_provider.salt': 'r+H5LT6EvgSSKFMZ2brdzQ=='}
+        )
         self.config.registry.registerUtility(AuthCheck, IAuthCheck)
 
         engine = create_engine('sqlite://')
@@ -54,7 +56,7 @@ class TestCase(unittest.TestCase):
 
         self.auth = 1
 
-        self.redirect_uri = u'http://localhost'
+        self.redirect_uri = 'http://localhost'
 
     def _get_auth(self):
         global _auth_value
@@ -201,8 +203,8 @@ class TestAuthorizeEndpoint(TestCase):
             redirect_uri = Oauth2RedirectUri(
                 self.client, 'https://otherhost.com')
             DBSession.add(redirect_uri)
-        self.request.params['redirect_uri'] = u'https://otherhost.com'
-        self.redirect_uri = u'https://otherhost.com'
+        self.request.params['redirect_uri'] = 'https://otherhost.com'
+        self.redirect_uri = 'https://otherhost.com'
         response = self._process_view()
         self._validate_authcode_response(response)
 

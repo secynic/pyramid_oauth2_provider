@@ -17,7 +17,7 @@ requires = [
     'zope.sqlalchemy',
     'zope.interface',
     'waitress',
-    'cryptacular'
+    'cryptography'
     ]
 
 setup(name='pyramid_oauth2_provider',

@@ -12,10 +12,12 @@
 
 import time
 from datetime import datetime
+from base64 import b64decode
 
 from sqlalchemy import Column
 from sqlalchemy import ForeignKey
 
+from sqlalchemy import Binary
 from sqlalchemy import Integer
 from sqlalchemy import Boolean
 from sqlalchemy import DateTime
@@ -31,7 +33,9 @@ from sqlalchemy.orm import synonym
 
 from zope.sqlalchemy import ZopeTransactionExtension
 
-from cryptacular.bcrypt import BCRYPTPasswordManager
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from cryptography.hazmat.backends import default_backend
+from .util import oauth2_settings
 
 from .generators import gen_token
 from .generators import gen_client_id
@@ -39,14 +43,14 @@ from .generators import gen_client_secret
 
 DBSession = scoped_session(sessionmaker(extension=ZopeTransactionExtension()))
 Base = declarative_base()
-password_manager = BCRYPTPasswordManager()
+backend = default_backend()
 
 
 class Oauth2Client(Base):
     __tablename__ = 'oauth2_provider_clients'
     id = Column(Integer, primary_key=True)
     client_id = Column(Unicode(64), unique=True, nullable=False)
-    _client_secret = Column(Unicode(255), unique=True, nullable=False)
+    _client_secret = Column(Binary(255), unique=True, nullable=False)
     revoked = Column(Boolean, default=False)
     revocation_date = Column(DateTime)
 
@@ -64,8 +68,20 @@ class Oauth2Client(Base):
         return self._client_secret
 
     def _set_client_secret(self, client_secret):
-
-        self._client_secret = password_manager.encode(client_secret)
+        salt = b64decode(oauth2_settings('salt').encode('utf-8'))
+        kdf = Scrypt(
+            salt=salt,
+            length=64,
+            n=2 ** 14,
+            r=8,
+            p=1,
+            backend=backend
+        )
+        try:
+            client_secret = bytes(client_secret, 'utf-8')
+        except TypeError:
+            pass
+        self._client_secret = kdf.derive(client_secret)
 
     client_secret = synonym('_client_secret', descriptor=property(
         _get_client_secret, _set_client_secret))
@@ -94,7 +110,7 @@ class Oauth2RedirectUri(Base):
 
     def __init__(self, client, uri):
         self.client = client
-        self.uri = uri.encode('utf-8')
+        self.uri = uri
 
 
 class Oauth2Code(Base):

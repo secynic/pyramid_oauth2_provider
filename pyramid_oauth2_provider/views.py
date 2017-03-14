@@ -12,6 +12,8 @@
 
 import logging
 
+from base64 import b64decode
+
 from pyramid.view import view_config
 from pyramid.security import NO_PERMISSION_REQUIRED
 from pyramid.security import authenticated_userid
@@ -21,13 +23,15 @@ from six.moves.urllib.parse import urlparse
 from six.moves.urllib.parse import parse_qsl
 from six.moves.urllib.parse import ParseResult
 from six.moves.urllib.parse import urlencode
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from cryptography.exceptions import InvalidKey
 
 from .models import DBSession as db
 from .models import Oauth2Token
 from .models import Oauth2Code
 from .models import Oauth2RedirectUri
 from .models import Oauth2Client
-from .models import password_manager
+from .models import backend
 from .errors import InvalidToken
 from .errors import InvalidClient
 from .errors import InvalidRequest
@@ -96,7 +100,7 @@ def oauth2_authorize(request):
     if not request.params.get('client_id'):
         return HTTPBadRequest(InvalidRequest(
             error_description='Invalid client credentials'))
-    request.client_id = request.params.get('client_id').encode('utf-8')
+    request.client_id = request.params.get('client_id')
 
     client = db.query(Oauth2Client).filter_by(
         client_id=request.client_id).first()
@@ -106,7 +110,7 @@ def oauth2_authorize(request):
         return HTTPBadRequest(InvalidRequest(
             error_description='Invalid client credentials'))
 
-    redirect_uri = (request.params.get('redirect_uri').encode('utf-8') if
+    redirect_uri = (request.params.get('redirect_uri') if
                     request.params.get('redirect_uri') else None)
     redirection_uri = None
     if len(client.redirect_uris) == 1 and (
@@ -227,8 +231,27 @@ def oauth2_token(request):
         client_id=request.client_id).first()
 
     # Again, the authorization policy should catch this, but check again.
-    if not client or not password_manager.check(client.client_secret,
-                                                request.client_secret):
+    salt = b64decode(oauth2_settings('salt').encode('utf-8'))
+    kdf = Scrypt(
+        salt=salt,
+        length=64,
+        n=2 ** 14,
+        r=8,
+        p=1,
+        backend=backend
+    )
+
+    try:
+        client_secret = request.client_secret
+        try:
+            client_secret = bytes(client_secret, 'utf-8')
+        except TypeError:
+            client_secret = client_secret.encode('utf-8')
+        kdf.verify(client_secret, client.client_secret)
+        bad_secret = False
+    except (AttributeError, InvalidKey):
+        bad_secret = True
+    if not client or bad_secret:
         log.info('received invalid client credentials')
         return HTTPBadRequest(InvalidRequest(
             error_description='Invalid client credentials'))
@@ -259,8 +282,8 @@ def handle_password(request, client):
 
     auth_check = request.registry.queryUtility(IAuthCheck)
     user_id = auth_check().checkauth(
-        request.POST.get('username').encode('utf-8'),
-        request.POST.get('password').encode('utf-8'))
+        request.POST.get('username'),
+        request.POST.get('password'))
 
     if not user_id:
         log.info('could not validate user credentials')
@@ -285,7 +308,7 @@ def handle_refresh_token(request, client):
             error_description='user_id field required'))
 
     auth_token = db.query(Oauth2Token).filter_by(
-        refresh_token=request.POST.get('refresh_token').encode('utf-8')
+        refresh_token=request.POST.get('refresh_token')
     ).first()
 
     if not auth_token:
@@ -298,7 +321,7 @@ def handle_refresh_token(request, client):
         return HTTPBadRequest(InvalidClient(
             error_description='Client does not own this refresh_token.'))
 
-    if str(auth_token.user_id) != request.POST.get('user_id').encode('utf-8'):
+    if str(auth_token.user_id) != request.POST.get('user_id'):
         log.info('invalid user_id')
         return HTTPBadRequest(InvalidClient(
             error_description='The given user_id does not match the given '
