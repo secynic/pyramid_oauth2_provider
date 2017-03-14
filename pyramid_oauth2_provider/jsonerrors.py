@@ -83,6 +83,8 @@ ${html_comment}
             page = page_template.substitute(status=self.status,
                 code=self.code, **args)
             if isinstance(page, text_type):
+                if not self.charset:
+                    self.charset = 'utf-8'
                 page = page.encode(self.charset)
             self.app_iter = [page]
             self.body = page
