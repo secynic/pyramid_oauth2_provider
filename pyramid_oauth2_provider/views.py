@@ -231,6 +231,8 @@ def oauth2_token(request):
         client_id=request.client_id).first()
 
     # Again, the authorization policy should catch this, but check again.
+    if not oauth2_settings('salt'):
+        raise ValueError('oauth2_provider.salt configuration required.')
     salt = b64decode(oauth2_settings('salt').encode('utf-8'))
     kdf = Scrypt(
         salt=salt,

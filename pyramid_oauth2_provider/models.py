@@ -68,6 +68,8 @@ class Oauth2Client(Base):
         return self._client_secret
 
     def _set_client_secret(self, client_secret):
+        if not oauth2_settings('salt'):
+            raise ValueError('oauth2_provider.salt configuration required.')
         salt = b64decode(oauth2_settings('salt').encode('utf-8'))
         kdf = Scrypt(
             salt=salt,
